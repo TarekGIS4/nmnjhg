@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="ar">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>شبكات الطرق الذكية</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+      body {
+        margin: 0;
+        font-family: Arial, sans-serif;
+        display: flex;
+        flex-direction: row;
+        height: 100vh;
+      }
+  
+      .sidebar {
+        width: 250px;
+        background: #dcd3d3;
+        padding: 15px;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 2px 0 5px rgba(0, 0, 0, 0.1);
+      }
+  
+      .service-btn {
+        display: flex;
+        align-items: center;
+        background: white;
+        border: none;
+        padding: 10px;
+        margin: 5px 0;
+        border-radius: 5px;
+        cursor: pointer;
+        font-size: 16px;
+        text-align: left;
+        transition: background 0.3s;
+      }
+      
+      .service-btn:hover {
+        background: #e0e0e0;
+      }
+  
+      .service-btn span {
+        margin-right: 10px;
+        font-size: 20px;
+      }
+  
+      #map {
+        flex: 1;
+        width: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="sidebar">
+      <h2>الخدمات المتاحة</h2>
+      <button class="service-btn" id="healthBtn"><span>🏥</span>الخدمات الصحية</button>
+      <button class="service-btn" id="educationBtn"><span>🏫</span>الخدمات التعليمية</button>
+      <button class="service-btn" id="commercialBtn"><span>🛒</span>الخدمات التجارية</button>
+      <button class="service-btn" id="routeBtn"><span>🚗</span>أفضل طريق</button>
+      <button class="service-btn" id="addPointBtn"><span>➕</span>إضافة نقطة</button>
+    </div>
+    <div id="map"></div>
+  <script>
+    // 1. إعداد الخريطة
+    const map = L.map('map').setView([30.0444, 31.2357], 13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    let startMarker = null;
+    let endMarker = null;
+    let routeLayer = null;
+    let serviceMarkers = [];
+
+    // إضافة ماركر
+    const createDraggableMarker = (latlng, popupText) => {
+      return L.marker(latlng, { draggable: true })
+        .bindPopup(popupText)
+        .addTo(map);
+    };
+
+    // نقاط البداية والنهاية
+    map.on('click', (e) => {
+      if (!startMarker) {
+        startMarker = createDraggableMarker(e.latlng, '🚦 نقطة البداية');
+      } else if (!endMarker) {
+        endMarker = createDraggableMarker(e.latlng, '🏁 نقطة النهاية');
+      }
+    });
+
+    // 2. جلب بيانات الخدمات من Overpass API
+    const fetchServices = (serviceType) => {
+      // إزالة الماركرات السابقة
+      serviceMarkers.forEach(marker => map.removeLayer(marker));
+      serviceMarkers = [];
+
+      let overpassQuery = '';
+      let emoji = '';
+      switch (serviceType) {
+        case 'health':
+          overpassQuery = `[out:json];node["amenity"="hospital"](around:5000,30.0444,31.2357);out;`;
+          emoji = '🏥';
+          break;
+        case 'education':
+          overpassQuery = `[out:json];node["amenity"="school"](around:5000,30.0444,31.2357);out;`;
+          emoji = '🏫';
+          break;
+        case 'commercial':
+          overpassQuery = `[out:json];node["shop"](around:5000,30.0444,31.2357);out;`;
+          emoji = '🛒';
+          break;
+        default:
+          return;
+      }
+
+      const overpassUrl = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(overpassQuery)}`;
+
+      fetch(overpassUrl)
+        .then(response => response.json())
+        .then(data => {
+          data.elements.forEach(element => {
+            const marker = L.marker([element.lat, element.lon])
+              .bindPopup(`${emoji} ${element.tags.name || 'بدون اسم'}`)
+              .addTo(map);
+            serviceMarkers.push(marker);
+          });
+        })
+        .catch(error => console.error('خطأ في استرجاع البيانات:', error));
+    };
+
+    // 3. تحليل: أفضل طريق
+    document.getElementById('routeBtn').onclick = () => {
+      if (!startMarker || !endMarker) {
+        alert('يرجى اختيار نقطتي البداية والنهاية!');
+        return;
+      }
+      const startCoords = startMarker.getLatLng();
+      const endCoords = endMarker.getLatLng();
+
+      const routeUrl = `https://router.project-osrm.org/route/v1/driving/${startCoords.lng},${startCoords.lat};${endCoords.lng},${endCoords.lat}?overview=full&geometries=geojson`;
+
+      fetch(routeUrl)
+        .then(response => response.json())
+        .then(data => {
+          const routeCoordinates = data.routes[0].geometry.coordinates.map(coord => [coord[1], coord[0]]);
+          if (routeLayer) map.removeLayer(routeLayer);
+          routeLayer = L.polyline(routeCoordinates, { color: 'blue', weight: 4 }).addTo(map);
+        })
+        .catch(error => console.error('خطأ في استرجاع البيانات:', error));
+    };
+
+    // 4. إضافة نقطة مخصصة
+    document.getElementById('addPointBtn').onclick = () => {
+      map.once('click', (e) => {
+        const customMarker = createDraggableMarker(e.latlng, '📍 نقطة مخصصة');
+        customMarker.on('click', () => {
+          alert('تحليل النقطة المخصصة');
+        });
+      });
+      alert('انقر على الخريطة لإضافة نقطة مخصصة.');
+    };
+
+    // 5. أزرار الخدمات
+    document.getElementById('healthBtn').onclick = () => fetchServices('health');
+    document.getElementById('educationBtn').onclick = () => fetchServices('education');
+    document.getElementById('commercialBtn').onclick = () => fetchServices('commercial');
+  </script>
+</body>
+</html>
+
